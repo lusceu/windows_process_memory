@@ -40,7 +40,7 @@ BOOL SetPrivilege(HANDLE hToken, LPCTSTR lpszPrivilege, BOOL bEnablePrivilege)
 }
 
 
-#define PROC_ID 0x117C 
+#define PROC_ID 0x1AEC
 #define PROC_INFORMATION_CLASS 0
 // pinvoke.net structure shows 48 bytes 
 #define PROC_INFORMATION_LENGTH 48
@@ -77,6 +77,7 @@ int main()
 		printf("Obtained process handle %d \n", hProcess);
 	}
 	
+
 	// call NtQueryInformationProcess to find the basaddress of the PEB of the target process 
 	// NtQueryInformationProcess needs dynamic linking
 	HMODULE hMod = LoadLibraryA("ntdll.dll");
@@ -90,14 +91,13 @@ int main()
 	}
 
 	
-	// MISSING BASE ADDRESS	
 	NTSTATUS ntstat = ntqueryip(hProcess, PROC_INFORMATION_CLASS, peb_buffer, PROC_INFORMATION_LENGTH, info_length);
 	printf("NtQueryInformationProcess status: %x \n", ntstat);
 	printf("Bytes written: %d \n", info_length);
 	printf("Address of PEB in target process: %#016x \n", (*peb_buffer).PebBaseAddress); 
 	
-	// MISSING BASE ADDRESS
-	// psapi - module information of a process - reads modules with adresses relative to base address
+
+	// psapi - module information of a process - reads modules with base addresses
 	HMODULE *module_array = malloc(256);
 	int module_array_size;
 	BOOL mod_res = K32EnumProcessModules(hProcess, module_array, 512, &module_array_size);
@@ -113,7 +113,6 @@ int main()
  	}	
 		
 	// in Anlehnung an https://guidedhacking.com/threads/get-module-base-address-tutorial-dwgetmodulebaseaddress.5781/
-	// MISSING BASE ADDRESS
 	// gets process snapshot and enumerates modules
 	HANDLE tlhlp_handle = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, PROC_ID);	
 	if(tlhlp_handle == INVALID_HANDLE_VALUE) 
@@ -131,9 +130,21 @@ int main()
 	}
 	
 	
+	/*
+		Reading base address:
+			* Remote Thread & GetModuleHandle ? 	
+			* ntqueryinformationthread -> teb -> address of peb -> image base ? 
+			* VirtualQuery & ReadProcessMemory as scan technique -> identify section headers in pe format -> section addresses (yara)
+
+	*/	
+
+
+	// final loop
 	while(1){
 		Sleep(1);	
 	}
+
+	
 
 }
 
