@@ -207,22 +207,26 @@ int main()
 	if image_section_header.Name == ".idata"
 		image_section_header.VirtualAddress = IdataSectionAddress	
 	
-	IdataSectionAddress	
-		0: ImportDirectoryTable -> First image_import_descriptor
-		(contains directory entries for imported dlls, last entry contains 0)
+	two_ways:	
+	*	optionalheader.image_data_directory[1] is import directory section address, contains dll image_import_descriptors(dll names and iat rva) 	
+			0: ImportDirectoryTable -> first image_import_descriptor
+			(contains directory entries for imported dlls, last entry contains 0)
+			
+			if(image_import_descriptor.Name == "target.dll")
+				iat = image_import_descriptor.FirstThunk(image_thunk_data)	
 		
-		if(image_import_descriptor.Name == "target.dll")
-			iat = image_import_descriptor.FirstThunk (image_thunk_data)	
-	
-		first_thunk.Function -> address of dll function
-		first_thunk.AddressOfData -> image_import_by_name
-		image_import_by_name.Name -> function name
+			first_thunk.Function -> address of dll function
+			first_thunk.AddressOfData -> image_import_by_name
+			image_import_by_name.Name -> function name
 
+	*	optionalheader.image_data_directory[12] is IAT section address	// import address table of all dll-functions, zero entry separated - corresponding dllname in import directory table
+			iat[0] -> image_thunk_data	
+			loop until function address is found 	
 			
 	*/ 
 
 	PPEB ProcessEnvironmentBlock = malloc(sizeof(PEB));	
-	PVOID ImageBaseAddress;
+	VOID *ImageBaseAddress;
 	ULONG bytes_read = 0; 
 	BOOL res = ReadProcessMemory(hProcess, PebBaseAddress, ProcessEnvironmentBlock, sizeof(PEB), &bytes_read);
 	if(!res){
@@ -265,17 +269,25 @@ int main()
 		Reading Sections
 		
 	*/
+	// needed variables for code injection
+	VOID *CodeSectionEnd;  // place for injection of code
+	IMAGE_DATA_DIRECTORY *IATDirectory;
+	VOID *IATaddress; // iat base address
+
+	// find .idata section
+	IMAGE_OPTIONAL_HEADER OptionalHeader = NtHeaders->OptionalHeader;
+	IATaddress = OptionalHeader.DataDirectory[12].VirtualAddress; 
+	//IATaddress = IATDirectory->VirtualAddress + (int)ImageBaseAddress;
+	printf("IAT @: %#018x \n", (int)IATaddress + (int)ImageBaseAddress);
 
 	// first section follows NtHeaders	
-
-	IMAGE_OPTIONAL_HEADER OptionalHeader = NtHeaders->OptionalHeader;
-
-	PVOID SectionHeaderBaseAddress = (PVOID) NtHeadersBaseAddress + sizeof(IMAGE_NT_HEADERS);
+	PVOID SectionHeaderBaseAddress = (VOID *) NtHeadersBaseAddress + sizeof(IMAGE_NT_HEADERS);
 	printf("SizeOfHeaders: %#010x \n", sizeof(IMAGE_NT_HEADERS));
 	printf("NtHeadersBaseAddress: %#010x \n", NtHeadersBaseAddress);
 	printf("SectionHeaderBaseAddress: %#010x \n", SectionHeaderBaseAddress);
 	IMAGE_SECTION_HEADER *SectionHeader = malloc(sizeof(IMAGE_SECTION_HEADER));	
 	
+
 	for(int i = 0; i < FileHeader.NumberOfSections; i++){
 
 		printf("SectionHeaderBaseAddress: %#010x \n", SectionHeaderBaseAddress);
@@ -287,10 +299,26 @@ int main()
 			printf("SectionHeader->Name: %s \n", SectionHeader->Name);
 			printf("SectionHeader->VirtualAddress: %#018x \n", SectionHeader->VirtualAddress);
 
+			if( strcmp(SectionHeader->Name, ".text") == 0 ){
+				CodeSectionEnd = SectionHeader->VirtualAddress + SectionHeader->Misc.VirtualSize + ImageBaseAddress;	
+				printf("	CodeSectionEnd: %#018x \n", CodeSectionEnd);
+			}
 		}
 
-		SectionHeaderBaseAddress = (PVOID) SectionHeaderBaseAddress + sizeof(IMAGE_SECTION_HEADER);
+		SectionHeaderBaseAddress = (VOID *) SectionHeaderBaseAddress + sizeof(IMAGE_SECTION_HEADER);
 	}
+
+
+
+	/*
+		Finding IAT entries
+
+	*/
+	
+				
+	
+		
+	
 
 	// final loop
 	while(1){
